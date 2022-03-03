@@ -1,38 +1,114 @@
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+
+pub struct SymbolTable {
+    table: HashMap<String, usize>,
+}
+
+impl SymbolTable {
+    pub fn new() -> SymbolTable {
+        let mut new_table = HashMap::new();
+        new_table.insert("SP".to_string(), 0);
+        new_table.insert("LCL".to_string(), 1);
+        new_table.insert("ARG".to_string(), 2);
+        new_table.insert("THIS".to_string(), 3);
+        new_table.insert("THAT".to_string(), 4);
+        new_table.insert("R0".to_string(), 0);
+        new_table.insert("R1".to_string(), 1);
+        new_table.insert("R2".to_string(), 2);
+        new_table.insert("R3".to_string(), 3);
+        new_table.insert("R4".to_string(), 4);
+        new_table.insert("R5".to_string(), 5);
+        new_table.insert("R6".to_string(), 6);
+        new_table.insert("R7".to_string(), 7);
+        new_table.insert("R8".to_string(), 8);
+        new_table.insert("R9".to_string(), 9);
+        new_table.insert("R10".to_string(), 10);
+        new_table.insert("R11".to_string(), 11);
+        new_table.insert("R12".to_string(), 12);
+        new_table.insert("R13".to_string(), 13);
+        new_table.insert("R14".to_string(), 14);
+        new_table.insert("R15".to_string(), 15);
+        new_table.insert("SCREEN".to_string(), 16384);
+        new_table.insert("KBD".to_string(), 24576);
+
+        SymbolTable { table: new_table }
+    }
+    pub fn add_entry(&mut self, symbol: String, address: usize) {
+        self.table.insert(symbol, address);
+    }
+    pub fn contains(&self, symbol: &str) -> bool {
+        match self.table.get(symbol) {
+            Some(_) => true,
+            _ => false,
+        }
+    }
+    pub fn get_adress(&self, symbol: &str) -> usize {
+        *self.table.get(symbol).unwrap()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum CommandType {
     ACommand,
     CCommand,
+    LCommand,
     Space,
+    None,
 }
 
 struct Command {
     command: String,
     command_type: CommandType,
+    counter: usize,
 }
 
 impl Command {
     fn judge_type(command: String) -> CommandType {
-        if command.chars().collect::<Vec<_>>()[0] == ' ' {
+        if command == "" {
+            CommandType::None
+        } else if command.chars().collect::<Vec<_>>()[0] == ' ' {
             CommandType::Space
         } else if command.chars().collect::<Vec<_>>()[0] == '@' {
             CommandType::ACommand
+        } else if command.chars().collect::<Vec<_>>()[0] == '(' {
+            CommandType::LCommand
         } else {
             CommandType::CCommand
         }
     }
-    fn new(command_name: String) -> Command {
-        let code = command_name.replace(" ", "");
+    fn new() -> Command {
         Command {
-            command: code,
-            command_type: Command::judge_type(command_name),
+            command: String::new(),
+            command_type: CommandType::None,
+            counter: 16,
         }
     }
-    fn symbol_a(&mut self) -> String {
+    fn load_command(&mut self, command_name: String) {
+        let code = command_name.replace(" ", "");
+        self.command = code;
+        self.command_type = Command::judge_type(command_name);
+    }
+    fn symbol_a(&mut self, table: &mut SymbolTable) -> String {
         self.command.remove(0);
-        self.command.clone()
+        match self.command.parse::<usize>() {
+            Ok(_) => self.command.clone(),
+            _ => {
+                if table.contains(&self.command) {
+                    table.get_adress(&self.command).to_string()
+                } else {
+                    table.add_entry(self.command.clone(), self.counter);
+                    let ans = self.counter;
+                    self.counter += 1;
+                    ans.to_string()
+                }
+            }
+        }
+    }
+    fn symbol_l(&mut self) -> String {
+        self.command.replace("(", "").replace(")", "").clone()
     }
     fn parse_c(&mut self) -> Vec<String> {
         let mut ans: Vec<String> = Vec::new();
@@ -63,20 +139,6 @@ impl Command {
             ans
         }
     }
-}
-
-#[test]
-fn test_command() {
-    let command1 = Command::new("@100".to_string());
-    let command2 = Command::new("D".to_string());
-    let command3 = Command::new("D=A".to_string());
-    let command4 = Command::new("D=D+A".to_string());
-    let command5 = Command::new("0;JMP".to_string());
-    assert_eq!(command1.command_type, CommandType::ACommand);
-    assert_eq!(command2.command_type, CommandType::CCommand);
-    assert_eq!(command3.command_type, CommandType::CCommand);
-    assert_eq!(command4.command_type, CommandType::CCommand);
-    assert_eq!(command5.command_type, CommandType::CCommand);
 }
 pub struct Code {}
 
@@ -145,37 +207,27 @@ pub struct Parser<'elt> {
     now_command: Command,
     counter: usize,
     file: &'elt str,
+    ram_number: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(filename: &'a str) -> Parser {
         Parser {
             commands: Vec::new(),
-            now_command: Command {
-                command: String::new(),
-                command_type: CommandType::None,
-            },
+            now_command: Command::new(),
             counter: 0,
             file: filename,
+            ram_number: 0,
         }
     }
     pub fn load_file(&mut self) {
         let v = fs::read_to_string(self.file).unwrap();
-        let mut flags = 0;
-        'outer: for lines in v.lines() {
-            for c in lines.to_string().as_str().chars() {
-                if c == '/' {
-                    flags += 1;
-                }
-                if flags == 2 {
-                    flags = 0;
-                    continue 'outer;
-                }
-            }
-            if lines.to_string().as_str() == "" {
-                continue 'outer;
-            }
-            self.commands.push(lines.to_string());
+        for lines in v.lines() {
+            self.commands.push(
+                lines.to_string().split('/').collect::<Vec<&str>>()[0]
+                    .replace(" ", "")
+                    .to_string(),
+            );
         }
     }
     fn has_more_commands(&self) -> bool {
@@ -187,7 +239,8 @@ impl<'a> Parser<'a> {
     }
     fn advance(&mut self) -> bool {
         if self.has_more_commands() {
-            self.now_command = Command::new(self.commands[self.counter].clone());
+            self.now_command
+                .load_command(self.commands[self.counter].clone());
             self.counter += 1;
             true
         } else {
@@ -197,8 +250,14 @@ impl<'a> Parser<'a> {
     fn command_type(&self) -> CommandType {
         self.now_command.command_type.clone()
     }
-    fn symbol(&mut self) -> String {
-        self.now_command.symbol_a().clone()
+    fn symbol(&mut self, table: &mut SymbolTable) -> String {
+        if self.command_type() == CommandType::ACommand {
+            self.now_command.symbol_a(table).clone()
+        } else if self.command_type() == CommandType::LCommand {
+            self.now_command.symbol_l().clone()
+        } else {
+            "".to_string()
+        }
     }
     fn dest(&mut self) -> String {
         self.now_command.parse_c()[0].clone()
@@ -209,9 +268,37 @@ impl<'a> Parser<'a> {
     fn jump(&mut self) -> String {
         self.now_command.parse_c()[2].clone()
     }
-    fn write_code(&mut self) -> String {
+    pub fn make_symbol_table(&mut self, table: &mut SymbolTable) {
+        while self.advance() {
+            if self.now_command.command_type == CommandType::ACommand {
+                self.ram_number += 1;
+                continue;
+            } else if self.now_command.command_type == CommandType::CCommand {
+                self.ram_number += 1;
+                continue;
+            } else if self.now_command.command_type != CommandType::LCommand {
+                continue;
+            } else {
+            }
+            {
+                let symbol = &mut self.now_command.command;
+                symbol.pop();
+                symbol.remove(0);
+            }
+            let symbol = self.now_command.command.clone();
+            table.table.insert(symbol, self.ram_number);
+        }
+    }
+    pub fn reset(&mut self) {
+        self.now_command.command = String::new();
+        self.now_command.command_type = CommandType::None;
+        self.counter = 0;
+    }
+    fn write_code(&mut self, table: &mut SymbolTable) -> String {
         if self.command_type() == CommandType::ACommand {
-            "0".to_string() + &(format!("{:015b}", self.symbol().parse::<i32>().unwrap())) + "\n"
+            "0".to_string()
+                + &(format!("{:015b}", self.symbol(table).parse::<i32>().unwrap()))
+                + "\n"
         } else if self.command_type() == CommandType::CCommand {
             "111".to_string()
                 + Code::comp(&self.comp())
@@ -222,33 +309,25 @@ impl<'a> Parser<'a> {
             "".to_string()
         }
     }
-    pub fn write_binary(&mut self, filename: &str) {
+    pub fn write_binary(&mut self, filename: &str, table: &mut SymbolTable) {
         let outfile = filename.replace(".asm", ".hack");
         let mut write_str: String = String::new();
         while self.advance() {
-            write_str += &self.write_code();
+            write_str += &self.write_code(table);
         }
         let mut f = BufWriter::new(File::create(outfile).unwrap());
         write!(f, "{}", write_str).unwrap();
     }
 }
+
 #[test]
-fn test_parser() {
-    let mut command = Parser::new("add/Add.asm");
+
+fn table_test() {
+    let mut command = Parser::new("max/Max.asm");
+    let mut table = SymbolTable::new();
     command.load_file();
-    assert_eq!(
-        command.commands,
-        vec![
-            "@2".to_string(),
-            "D=A".to_string(),
-            "@3".to_string(),
-            "D=D+A".to_string(),
-            "@0".to_string(),
-            "M=D".to_string(),
-        ]
-    );
-    command.advance();
-    assert_eq!(command.write_code(), "0000000000000010\n".to_string());
-    command.advance();
-    assert_eq!(command.write_code(), "1110110000010000\n".to_string());
+    command.make_symbol_table(&mut table);
+    for (k, v) in &table.table {
+        println!("{}: {}", k, v);
+    }
 }
